@@ -141,7 +141,7 @@ void handleRequest(int sockfd, struct sockaddr_in *client_addr, socklen_t client
 int main() {
     
     struct DnsProxyConfig config = {0};
-    readConfig("config/dns_proxy.conf", &config);
+    readConfig("../config/dns_proxy.conf", &config);
 
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
