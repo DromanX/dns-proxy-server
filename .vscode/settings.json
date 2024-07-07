@@ -1,8 +1,0 @@
-{
-    "files.associations": {
-        "stdio.h": "c",
-        "socket.h": "c",
-        "types.h": "c"
-    },
-    "C_Cpp.loggingLevel": "Debug"
-}
