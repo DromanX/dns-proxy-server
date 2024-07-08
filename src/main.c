@@ -3,22 +3,15 @@
 #include <stdlib.h>         // Функция realloc()
 #include <sys/socket.h>     // Функция socket() 
 #include <sys/types.h>      //  
-#include <arpa/inet.h>      // Макрос INET_ADDRSTRLEN
 #include <unistd.h>         // Функция close()
+
+#include "../include/config.h"
+#include "../include/dns_proxy.h"
 
 #define CONFIG_FILE "dns_proxy.conf"
 #define MAX_PACKET_SIZE 512
 #define SA struct sockaddr
 //#define PORT_DNS 5353
-
-
-typedef struct {
-    char upstream_dns_server_ip[INET_ADDRSTRLEN];   // IP-адрес вышестоящего DNS
-    char **blacklist;                               // Чёрный список доменных имён 
-    int blacklist_size;                             // Размер чёрного списка
-    char blacklist_response_type[16];               // Тип ответа для доменов в чёрном списке
-    char fixed_ip[INET_ADDRSTRLEN];                 // Предварительно настроеный IP-адрес для доменов чёрном списке
-} DnsProxyConfig;
 
 /*  Открываем и читаем файл конфигурации  */
 void readConfig(const char *filename, DnsProxyConfig *config) {
