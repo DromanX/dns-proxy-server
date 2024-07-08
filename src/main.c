@@ -12,16 +12,16 @@
 //#define PORT_DNS 5353
 
 
-struct DnsProxyConfig {
+typedef struct {
     char upstream_dns_server_ip[INET_ADDRSTRLEN];   // IP-адрес вышестоящего DNS
     char **blacklist;                               // Чёрный список доменных имён 
     int blacklist_size;                             // Размер чёрного списка
-    char response_type[16];                         // Тип ответа для доменов в чёрном списке
+    char blacklist_response_type[16];               // Тип ответа для доменов в чёрном списке
     char fixed_ip[INET_ADDRSTRLEN];                 // Предварительно настроеный IP-адрес для доменов чёрном списке
-};
+} DnsProxyConfig;
 
 /*  Открываем и читаем файл конфигурации  */
-void readConfig(const char *filename, struct DnsProxyConfig *config) {
+void readConfig(const char *filename, DnsProxyConfig *config) {
     FILE *file = fopen(filename, "r");
     if (file == NULL) {
         perror("Ошибка открытия файла конфигурации");
@@ -35,8 +35,8 @@ void readConfig(const char *filename, struct DnsProxyConfig *config) {
 
         if (strcmp(key, "dns_server_ip") == 0) {
             strncpy(config->upstream_dns_server_ip, value, INET_ADDRSTRLEN);
-        } else if (strcmp(key, "response_type") == 0) {
-            strncpy(config->response_type, value, sizeof(config->response_type));
+        } else if (strcmp(key, "blacklist_response_type") == 0) {
+            strncpy(config->blacklist_response_type, value, sizeof(config->blacklist_response_type));
         } else if (strcmp(key, "fixed_ip") == 0) {
             strncpy(config->fixed_ip, value, INET_ADDRSTRLEN);
         } else if (strcmp(key, "blacklist") == 0) {
@@ -57,7 +57,7 @@ void readConfig(const char *filename, struct DnsProxyConfig *config) {
 }
 
 /*  Проверка доменного имени в чёрном списке  */
-int isBlacklisted(const char *domain, struct DnsProxyConfig *config) {
+int isBlacklisted(const char *domain, DnsProxyConfig *config) {
     for (int i = 0; i < config->blacklist_size; i++) { 
         if (strcmp(domain, config->blacklist[i]) == 0) {
             return 1;
@@ -81,7 +81,7 @@ void extractDomainName(const unsigned char *buffer, char *domain) {
 }
 
 /*  Обработка входящего DNS-запроса  */
-void handleRequest(int sockfd, struct sockaddr_in *client_addr, socklen_t client_len, struct DnsProxyConfig *config) {
+void handleRequest(int sockfd, struct sockaddr_in *client_addr, socklen_t client_len, DnsProxyConfig *config) {
     char response[MAX_PACKET_SIZE];
     ssize_t received = recvfrom(sockfd, response, sizeof(response), 0, (SA*) client_addr, &client_len);
     
@@ -96,11 +96,11 @@ void handleRequest(int sockfd, struct sockaddr_in *client_addr, socklen_t client
     if (isBlacklisted((const char*) domain, config)) {
         printf("Домен заблокирован: %s\n", domain);
 
-        if (strcmp(config->response_type, "NOT_FOUND") == 0) {
+        if (strcmp(config->blacklist_response_type, "NOT_FOUND") == 0) {
             response[3] |= 0x03;
-        } else if (strcmp(config->response_type, "DENIED") == 0) {
+        } else if (strcmp(config->blacklist_response_type, "DENIED") == 0) {
             response[3] |= 0x05;
-        } else if (strcmp(config->response_type, "FIXED_IP") == 0) {
+        } else if (strcmp(config->blacklist_response_type, "FIXED_IP") == 0) {
             struct in_addr addr;
             int res = inet_pton(AF_INET, config->fixed_ip, &addr);
             if (res == 0) {
@@ -140,7 +140,7 @@ void handleRequest(int sockfd, struct sockaddr_in *client_addr, socklen_t client
 
 int main() {
     
-    struct DnsProxyConfig config = {0};
+    DnsProxyConfig config = {0};
     readConfig("../config/dns_proxy.conf", &config);
 
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -175,3 +175,7 @@ int main() {
     
     return 0;
 }
+
+
+
+
