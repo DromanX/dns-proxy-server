@@ -11,6 +11,6 @@ typedef struct {
     char fixed_ip[INET_ADDRSTRLEN];                 // Предварительно настроеный IP-адрес для доменов чёрном списке
 } DnsProxyConfig;
 
-int readConfig(const char *filename, DnsProxyConfig *config);
+void readConfig(const char *filename, DnsProxyConfig *config);
 
 #endif

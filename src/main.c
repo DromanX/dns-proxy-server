@@ -25,7 +25,7 @@ void readConfig(const char *filename, DnsProxyConfig *config) {
     while (fgets(str, sizeof(str), file) != NULL) {
         char *key = strtok(str, "=");
         char *value = strtok(NULL, "\n");
-
+        
         if (strcmp(key, "dns_server_ip") == 0) {
             strncpy(config->upstream_dns_server_ip, value, INET_ADDRSTRLEN);
         } else if (strcmp(key, "blacklist_response_type") == 0) {
