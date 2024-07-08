@@ -1,22 +1,20 @@
+#include "../include/config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../include/config.h"
 
 #define MAX_LINE_LENGTH 256
 
 void readConfig(const char *filename, DnsProxyConfig *config)
 {
     FILE *file = fopen(filename, "r");
-    if (file == NULL)
-    {
+    if (file == NULL) {
         perror("Ошибка открытия файла конфигурации");
         exit(EXIT_FAILURE);
     }
 
     char line[MAX_LINE_LENGTH];
-    while (fgets(line, sizeof(line), file) != NULL)
-    {
+    while (fgets(line, sizeof(line), file) != NULL) {
         char *key = strtok(line, "=");
         char *value = strtok(NULL, "\n");
 
@@ -29,11 +27,9 @@ void readConfig(const char *filename, DnsProxyConfig *config)
                 strncpy(config->fixed_ip, value, INET_ADDRSTRLEN);
             } else if (strcmp(key, "blacklist") == 0) {
                 char *domain = strtok(value, ",");
-                while (domain != NULL)
-                {
+                while (domain != NULL) {
                     config->blacklist = realloc(config->blacklist, sizeof(char *) * (++config->blacklist_size));
-                    if (config->blacklist == NULL)
-                    {
+                    if (config->blacklist == NULL) {
                         perror("Невозможно выделить память");
                         exit(EXIT_FAILURE);
                     }
