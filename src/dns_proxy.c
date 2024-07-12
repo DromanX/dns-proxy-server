@@ -6,6 +6,7 @@
 #include "../include/dns_proxy.h"
 #define DNS_PORT 5454
 #define MAX_PACKET_DNS_SIZE 512
+#define DNS_HEADER_SIZE 12
 
 int isDomainBlacklisted(const char *domain, const DnsProxyConfig *config) {
     for (int i = 0; i < config->blacklist_size; i++) {
@@ -16,18 +17,18 @@ int isDomainBlacklisted(const char *domain, const DnsProxyConfig *config) {
 }
 
 void extractDomain(const unsigned char *packet, char *domain) {
-    int i = 0;
-    const unsigned char *pos;
-    pos = packet + 12;
-    int length = *pos;
-    while (*pos != '\0') {
-        domain[i++] = *++pos;
+    const unsigned char *pos = packet + DNS_HEADER_SIZE;
+    int length_domain = 0;
+    int j = 0;
+    while (*pos != 0) {
+        length_domain = *pos;
+        for (int i = 0; i < length_domain; i++) {
+            domain[j++] = *++pos;
+        }
+        domain[j++] = '.';
+        ++pos;
     }
-    domain[i++] = '.';
-    length = *++pos;
-    while (i < length) {
-        domain[i++] = *++pos;
-    }
+    domain[--j] = '\0';
 }
 
 void createResponse() {
