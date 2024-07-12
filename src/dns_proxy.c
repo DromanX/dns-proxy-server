@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include "../include/dns_proxy.h"
+
 #define DNS_PORT 5454
 #define MAX_PACKET_DNS_SIZE 512
 #define DNS_HEADER_SIZE 12
@@ -31,7 +32,9 @@ void extractDomain(const unsigned char *packet, char *domain) {
     domain[--j] = '\0';
 }
 
-void createResponse() {
+void createResponse(unsigned char *response, const unsigned char *query, const DnsProxyConfig *config) {
+    DNSHeader *header = (DNSHeader *)response;
+    memcpy(response, query, 12);
 }
 
 void runServer(const DnsProxyConfig *config) {
@@ -81,5 +84,13 @@ void runServer(const DnsProxyConfig *config) {
         char domain[256];
         extractDomain(packet, domain);
         printf("Получен запрос для домена: %s\n", domain);
+
+        if (isDomainBlacklisted(domain, config)) {
+            printf("Домен %s в чёрном списке", domain);
+            unsigned char response[MAX_PACKET_DNS_SIZE];
+            createResponse(response, packet, config);
+
+        } else {
+        }
     }
 }
