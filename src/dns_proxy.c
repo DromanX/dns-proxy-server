@@ -37,33 +37,39 @@ void createResponse(unsigned char *response, const unsigned char *query, const D
     memcpy(response, query, DNS_HEADER_SIZE);
 
     header->flags = htons(0x8180);
-    header->ancount = htons(1);
+    if (strcmp(config->blacklist_response_type, "NOT_FOUND") == 0) {
+        response[3] |= 0x03;
+    } else if (strcmp(config->blacklist_response_type, "REFUSED") == 0) {
+        header->flags |= 0x0005;
+    } else if (strcmp(config->blacklist_response_type, "FIXED_IP") == 0) {
+        header->ancount = htons(1);
 
-    int question_len = 0;
-    while (query[DNS_HEADER_SIZE + question_len] != 0) {
-        question_len += query[DNS_HEADER_SIZE + question_len] + 1;
-    }
-    question_len += 5;
-    memcpy(response + DNS_HEADER_SIZE, query + DNS_HEADER_SIZE, question_len);
+        int question_len = 0;
+        while (query[DNS_HEADER_SIZE + question_len] != 0) {
+            question_len += query[DNS_HEADER_SIZE + question_len] + 1;
+        }
+        question_len += 5;
+        memcpy(response + DNS_HEADER_SIZE, query + DNS_HEADER_SIZE, question_len);
 
-    int answer_start = DNS_HEADER_SIZE + question_len;
-    response[answer_start] = 0xC0;
-    response[answer_start + 1] = 0x0C;
-    response[answer_start + 2] = 0;
-    response[answer_start + 3] = 1;
-    response[answer_start + 4] = 0;
-    response[answer_start + 5] = 1;
-    response[answer_start + 6] = 0;
-    response[answer_start + 7] = 0;
-    response[answer_start + 8] = 0;
-    response[answer_start + 9] = 60;
-    response[answer_start + 10] = 0;
-    response[answer_start + 11] = 4;
+        int answer_start = DNS_HEADER_SIZE + question_len;
+        response[answer_start] = 0xC0;
+        response[answer_start + 1] = 0x0C;
+        response[answer_start + 2] = 0;
+        response[answer_start + 3] = 1;
+        response[answer_start + 4] = 0;
+        response[answer_start + 5] = 1;
+        response[answer_start + 6] = 0;
+        response[answer_start + 7] = 0;
+        response[answer_start + 8] = 0;
+        response[answer_start + 9] = 60;
+        response[answer_start + 10] = 0;
+        response[answer_start + 11] = 4; // +11
 
-    if (strlen(config->fixed_ip) > 0) {
-        inet_pton(AF_INET, config->fixed_ip, response + answer_start + DNS_HEADER_SIZE);
-    } else {
-        memset(response + answer_start + DNS_HEADER_SIZE, 0, 4);
+        if (strlen(config->fixed_ip) > 0) {
+            inet_pton(AF_INET, config->fixed_ip, response + answer_start + DNS_HEADER_SIZE);
+        } else {
+            memset(response + answer_start + DNS_HEADER_SIZE, 0, 4);
+        }
     }
 }
 
@@ -116,10 +122,10 @@ void runServer(const DnsProxyConfig *config) {
         printf("Получен запрос для домена: %s\n", domain);
 
         if (isDomainBlacklisted(domain, config)) {
-            printf("Домен %s в чёрном списке", domain);
+            printf("Домен %s находится в чёрном списке: %s\n", domain, config->blacklist_response_type);
             unsigned char response[MAX_PACKET_DNS_SIZE];
             createResponse(response, packet, config);
-            sendto(sockfd, response, received + 16, 0, (const struct sockaddr *)&client_addr, client_len);
+            sendto(sockfd, response, received, 0, (const struct sockaddr *)&client_addr, client_len);
         } else {
             sendto(sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
 
