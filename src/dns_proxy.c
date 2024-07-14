@@ -34,7 +34,37 @@ void extractDomain(const unsigned char *packet, char *domain) {
 
 void createResponse(unsigned char *response, const unsigned char *query, const DnsProxyConfig *config) {
     DNSHeader *header = (DNSHeader *)response;
-    memcpy(response, query, 12);
+    memcpy(response, query, DNS_HEADER_SIZE);
+
+    header->flags = htons(0x8180);
+    header->ancount = htons(1);
+
+    int question_len = 0;
+    while (query[DNS_HEADER_SIZE + question_len] != 0) {
+        question_len += query[DNS_HEADER_SIZE + question_len] + 1;
+    }
+    question_len += 5;
+    memcpy(response + DNS_HEADER_SIZE, query + DNS_HEADER_SIZE, question_len);
+
+    int answer_start = DNS_HEADER_SIZE + question_len;
+    response[answer_start] = 0xC0;
+    response[answer_start + 1] = 0x0C;
+    response[answer_start + 2] = 0;
+    response[answer_start + 3] = 1;
+    response[answer_start + 4] = 0;
+    response[answer_start + 5] = 1;
+    response[answer_start + 6] = 0;
+    response[answer_start + 7] = 0;
+    response[answer_start + 8] = 0;
+    response[answer_start + 9] = 60;
+    response[answer_start + 10] = 0;
+    response[answer_start + 11] = 4;
+
+    if (strlen(config->fixed_ip) > 0) {
+        inet_pton(AF_INET, config->fixed_ip, response + answer_start + DNS_HEADER_SIZE);
+    } else {
+        memset(response + answer_start + DNS_HEADER_SIZE, 0, 4);
+    }
 }
 
 void runServer(const DnsProxyConfig *config) {
@@ -89,8 +119,15 @@ void runServer(const DnsProxyConfig *config) {
             printf("Домен %s в чёрном списке", domain);
             unsigned char response[MAX_PACKET_DNS_SIZE];
             createResponse(response, packet, config);
-
+            sendto(sockfd, response, received + 16, 0, (const struct sockaddr *)&client_addr, client_len);
         } else {
+            sendto(sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
+
+            int upstrean_response = recvfrom(sockfd, packet, sizeof(packet), 0, NULL, NULL);
+            if (upstrean_response > 0) {
+                sendto(sockfd, packet, upstrean_response, 0, (const struct sockaddr *)&client_addr, client_len);
+            }
         }
     }
+    close(sockfd);
 }
