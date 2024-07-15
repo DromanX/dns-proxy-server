@@ -32,15 +32,15 @@ void extractDomain(const unsigned char *packet, char *domain) {
     domain[--j] = '\0';
 }
 
-void createResponse(unsigned char *response, const unsigned char *query, const DnsProxyConfig *config) {
+void createResponse(unsigned char *response, const unsigned char *query, const DnsProxyConfig *config, unsigned short length_query) {
     DNSHeader *header = (DNSHeader *)response;
-    memcpy(response, query, DNS_HEADER_SIZE);
+    memcpy(response, query, length_query);
 
     header->flags = htons(0x8180);
     if (strcmp(config->blacklist_response_type, "NOT_FOUND") == 0) {
         response[3] |= 0x03;
     } else if (strcmp(config->blacklist_response_type, "REFUSED") == 0) {
-        header->flags |= 0x0005;
+        response[4] |= 0x05;
     } else if (strcmp(config->blacklist_response_type, "FIXED_IP") == 0) {
         header->ancount = htons(1);
 
@@ -124,7 +124,7 @@ void runServer(const DnsProxyConfig *config) {
         if (isDomainBlacklisted(domain, config)) {
             printf("Домен %s находится в чёрном списке: %s\n", domain, config->blacklist_response_type);
             unsigned char response[MAX_PACKET_DNS_SIZE];
-            createResponse(response, packet, config);
+            createResponse(response, packet, config, received);
             sendto(sockfd, response, received, 0, (const struct sockaddr *)&client_addr, client_len);
         } else {
             sendto(sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
