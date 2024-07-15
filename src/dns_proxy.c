@@ -42,33 +42,32 @@ void createResponse(unsigned char *response, const unsigned char *query, const D
     } else if (strcmp(config->blacklist_response_type, "REFUSED") == 0) {
         response[4] |= 0x05;
     } else if (strcmp(config->blacklist_response_type, "FIXED_IP") == 0) {
-        header->ancount = htons(1);
+        response[7] = 1;
 
-        int question_len = 0;
-        while (query[DNS_HEADER_SIZE + question_len] != 0) {
-            question_len += query[DNS_HEADER_SIZE + question_len] + 1;
+        int pos = DNS_HEADER_SIZE;
+        while (response[pos] != 0) {
+            pos++;
         }
-        question_len += 5;
-        memcpy(response + DNS_HEADER_SIZE, query + DNS_HEADER_SIZE, question_len);
+        pos += 5; // Перемещение к секции Answer
 
-        int answer_start = DNS_HEADER_SIZE + question_len;
-        response[answer_start] = 0xC0;
-        response[answer_start + 1] = 0x0C;
-        response[answer_start + 2] = 0;
-        response[answer_start + 3] = 1;
-        response[answer_start + 4] = 0;
-        response[answer_start + 5] = 1;
-        response[answer_start + 6] = 0;
-        response[answer_start + 7] = 0;
-        response[answer_start + 8] = 0;
-        response[answer_start + 9] = 60;
-        response[answer_start + 10] = 0;
-        response[answer_start + 11] = 4; // +11
+        response[pos++] = 0xC0;
+        response[pos++] = 0x0C;
+        response[pos++] = 0;
+        response[pos++] = 1;
+        response[pos++] = 0;
+        response[pos++] = 1;
+        response[pos++] = 0;
+        response[pos++] = 0;
+        response[pos++] = 0;
+        response[pos++] = 0x78; // TTL = 120sec
+        response[pos++] = 0;
+        response[pos++] = 4;
 
         if (strlen(config->fixed_ip) > 0) {
-            inet_pton(AF_INET, config->fixed_ip, response + answer_start + DNS_HEADER_SIZE);
+            inet_pton(AF_INET, config->fixed_ip, response + pos);
         } else {
-            memset(response + answer_start + DNS_HEADER_SIZE, 0, 4);
+            printf("Не установлен IP-адрес для FIXED_IP в файле конфигурации. Установлен адрес по-умолчанию 0.0.0.0\n");
+            memset(response + pos, 0, 4);
         }
     }
 }
@@ -125,7 +124,7 @@ void runServer(const DnsProxyConfig *config) {
             printf("Домен %s находится в чёрном списке: %s\n", domain, config->blacklist_response_type);
             unsigned char response[MAX_PACKET_DNS_SIZE];
             createResponse(response, packet, config, received);
-            sendto(sockfd, response, received, 0, (const struct sockaddr *)&client_addr, client_len);
+            sendto(sockfd, response, sizeof(response), 0, (const struct sockaddr *)&client_addr, client_len);
         } else {
             sendto(sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
 
