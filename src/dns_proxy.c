@@ -1,3 +1,5 @@
+#include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,16 +52,21 @@ void createResponse(unsigned char *response, const unsigned char *query, const D
         }
         pos += 5; // Перемещение к секции Answer
 
+        // NAME
         response[pos++] = 0xC0;
         response[pos++] = 0x0C;
+        // TYPE = A
         response[pos++] = 0;
         response[pos++] = 1;
+        // CLASS = IN
         response[pos++] = 0;
         response[pos++] = 1;
+        // TTL = 120 sec
         response[pos++] = 0;
         response[pos++] = 0;
         response[pos++] = 0;
-        response[pos++] = 0x78; // TTL = 120sec
+        response[pos++] = 0x78;
+        // RDLENGTH = 4
         response[pos++] = 0;
         response[pos++] = 4;
 
@@ -72,7 +79,17 @@ void createResponse(unsigned char *response, const unsigned char *query, const D
     }
 }
 
+volatile sig_atomic_t running = 1;
+
+void signalHandler(int signum) {
+    (void)signum;
+    running = 0;
+}
+
 void runServer(const DnsProxyConfig *config) {
+    signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);
+
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
         perror("Не удалось создать сокет");
@@ -94,8 +111,8 @@ void runServer(const DnsProxyConfig *config) {
 
     upstream_dns_addr.sin_family = AF_INET;
     upstream_dns_addr.sin_port = htons(53);
-    int res = inet_pton(AF_INET, config->upstream_dns_server_ip, &upstream_dns_addr.sin_addr);
 
+    int res = inet_pton(AF_INET, config->upstream_dns_server_ip, &upstream_dns_addr.sin_addr);
     if (res == 0) {
         perror("Отсутствует адрес вышестоящего DNS-сервера");
         exit(EXIT_FAILURE);
@@ -104,35 +121,46 @@ void runServer(const DnsProxyConfig *config) {
         exit(EXIT_FAILURE);
     }
 
-    printf("DNS-прокси-сервер запущен...\n");
+    if (running)
+        printf("DNS-прокси-сервер запущен...\n");
+    while (running) {
+        struct pollfd fds;
 
-    while (1) {
-        unsigned char packet[MAX_PACKET_DNS_SIZE];
-        socklen_t client_len = sizeof(client_addr);
-        ssize_t received = recvfrom(sockfd, packet, sizeof(packet), 0, (struct sockaddr *)&client_addr, &client_len);
+        fds.fd = sockfd;
+        fds.events = POLLIN;
 
-        if (received < 0) {
-            perror("Ошибка при получении данных от клиента");
-            continue;
-        }
+        int ret = poll(&fds, 1, 1000);
+        if (ret > 0) {
+            if (fds.revents & POLLIN) {
+                fds.revents = 0;
+                unsigned char packet[MAX_PACKET_DNS_SIZE];
+                socklen_t client_len = sizeof(client_addr);
 
-        char domain[256];
-        extractDomain(packet, domain);
-        printf("Получен запрос для домена: %s\n", domain);
+                ssize_t received = recvfrom(sockfd, packet, sizeof(packet), 0, (struct sockaddr *)&client_addr, &client_len);
+                if (received < 0) {
+                    perror("Ошибка при получении данных от клиента");
+                    continue;
+                }
 
-        if (isDomainBlacklisted(domain, config)) {
-            printf("Домен %s находится в чёрном списке: %s\n", domain, config->blacklist_response_type);
-            unsigned char response[MAX_PACKET_DNS_SIZE];
-            createResponse(response, packet, config, received);
-            sendto(sockfd, response, sizeof(response), 0, (const struct sockaddr *)&client_addr, client_len);
-        } else {
-            sendto(sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
+                char domain[256];
+                extractDomain(packet, domain);
+                printf("Получен запрос для домена: %s\n", domain);
 
-            int upstrean_response = recvfrom(sockfd, packet, sizeof(packet), 0, NULL, NULL);
-            if (upstrean_response > 0) {
-                sendto(sockfd, packet, upstrean_response, 0, (const struct sockaddr *)&client_addr, client_len);
+                if (isDomainBlacklisted(domain, config)) {
+                    printf("Домен %s находится в чёрном списке: %s\n", domain, config->blacklist_response_type);
+                    unsigned char response[MAX_PACKET_DNS_SIZE];
+                    createResponse(response, packet, config, received);
+                    sendto(sockfd, response, sizeof(response), 0, (const struct sockaddr *)&client_addr, client_len);
+                } else {
+                    sendto(sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
+                    int upstrean_response = recvfrom(sockfd, packet, sizeof(packet), 0, NULL, NULL);
+                    if (upstrean_response > 0) {
+                        sendto(sockfd, packet, upstrean_response, 0, (const struct sockaddr *)&client_addr, client_len);
+                    }
+                }
             }
         }
     }
+    printf("Завершение работы DNS-proxy-сервера...\n");
     close(sockfd);
 }
