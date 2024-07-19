@@ -92,6 +92,8 @@ void signalHandler(int signum) {
 }
 
 void runServer(const DnsProxyConfig *config) {
+
+    // Установка обработки сигналов для завершения работы
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
@@ -102,17 +104,16 @@ void runServer(const DnsProxyConfig *config) {
         exit(EXIT_FAILURE);
     }
 
-    // Сокет сервера для связи с вышестоящим DNS-сервером
+    // Сокет сервера для связи с вышестоящим DNS-сервером и установка для него неблокирующего режима
     int upstream_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (upstream_sockfd < 0) {
         perror("Не удалось создать сокет");
         exit(EXIT_FAILURE);
     }
-
-    // Установка неблокирующего режима для сокета upstream_sockfd
     int flags = fcntl(upstream_sockfd, F_GETFL, 0);
     fcntl(upstream_sockfd, F_SETFL, flags | O_NONBLOCK);
 
+    // Структуры для представления адреса и порта сокетов сервера, клиента и вышестояго днс-сервера
     struct sockaddr_in server_addr = { 0 }, client_addr = { 0 }, upstream_dns_addr = { 0 };
 
     server_addr.sin_family = AF_INET;
@@ -141,15 +142,17 @@ void runServer(const DnsProxyConfig *config) {
     if (running)
         printf("DNS-прокси-сервер запущен...\n");
     while (running) {
+        // Массив двух структур для мониторинга сокетов
         struct pollfd fds[2];
 
+        // client
         fds[0].fd = sockfd;
         fds[0].events = POLLIN;
+        // upstream dns
         fds[1].fd = upstream_sockfd;
         fds[1].events = POLLIN;
 
-        int ret = poll(fds, 2, 1000);
-        if (ret > 0) {
+        if (poll(fds, 2, 1000) > 0) {
             if (fds[0].revents & POLLIN) {
                 fds[0].revents = 0;
 
@@ -174,18 +177,16 @@ void runServer(const DnsProxyConfig *config) {
                 } else {
                     sendto(upstream_sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
 
-                    struct pollfd upstream_fds;
-                    upstream_fds.fd = upstream_sockfd;
-                    upstream_fds.events = POLLIN;
-                    if (poll(&upstream_fds, 1, 5000) > 0) {
-                        if (upstream_fds.revents & POLLIN) {
+                    // Ожидание ответа от вышестоящего сервера с таймаутом в 5 секунд
+                    if (poll(&fds[1], 1, 5000) > 0) {
+                        if (fds[1].revents & POLLIN) {
                             int upstream_response = recvfrom(upstream_sockfd, packet, sizeof(packet), 0, NULL, NULL);
                             if (upstream_response > 0) {
                                 sendto(sockfd, packet, upstream_response, 0, (const struct sockaddr *)&client_addr, client_len);
                             }
                         }
                     } else {
-                        printf("Таймаут при ожидании ответа от вышестоящего DNS-сервера\n");
+                        printf("Таймаут ожидания ответа от вышестоящего DNS-сервера\n");
                     }
                 }
             }
