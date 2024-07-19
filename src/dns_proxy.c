@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -35,18 +36,22 @@ void extractDomain(const unsigned char *packet, char *domain) {
 }
 
 void createResponse(unsigned char *response, const unsigned char *query, const DnsProxyConfig *config, unsigned short length_query) {
-    DNSHeader *header = (DNSHeader *)response;
     memcpy(response, query, length_query);
 
-    header->flags = htons(0x8180);
+    // FLAGS
+    response[2] = 0x81;
+    response[3] = 0x80;
+
+    // Проверка типа ошибки заданной в конфигурации для доменов в чёрном списке и последующая модификация DNS-ответа
     if (strcmp(config->blacklist_response_type, "NOT_FOUND") == 0) {
-        response[3] |= 0x03;
+        response[3] |= 0x03; // RCODE = NXDOMAIN
     } else if (strcmp(config->blacklist_response_type, "REFUSED") == 0) {
-        response[4] |= 0x05;
+        response[4] |= 0x05; // RCODE = REFUSED
     } else if (strcmp(config->blacklist_response_type, "FIXED_IP") == 0) {
         response[7] = 1;
 
-        int pos = DNS_HEADER_SIZE;
+        int pos = DNS_HEADER_SIZE; // Текущая позиция байта в DNS-ответе
+
         while (response[pos] != 0) {
             pos++;
         }
@@ -90,11 +95,23 @@ void runServer(const DnsProxyConfig *config) {
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
+    // Сокет сервера для связи с клиентом
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
         perror("Не удалось создать сокет");
         exit(EXIT_FAILURE);
     }
+
+    // Сокет сервера для связи с вышестоящим DNS-сервером
+    int upstream_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (upstream_sockfd < 0) {
+        perror("Не удалось создать сокет");
+        exit(EXIT_FAILURE);
+    }
+
+    // Установка неблокирующего режима для сокета upstream_sockfd
+    int flags = fcntl(upstream_sockfd, F_GETFL, 0);
+    fcntl(upstream_sockfd, F_SETFL, flags | O_NONBLOCK);
 
     struct sockaddr_in server_addr = { 0 }, client_addr = { 0 }, upstream_dns_addr = { 0 };
 
@@ -124,15 +141,18 @@ void runServer(const DnsProxyConfig *config) {
     if (running)
         printf("DNS-прокси-сервер запущен...\n");
     while (running) {
-        struct pollfd fds;
+        struct pollfd fds[2];
 
-        fds.fd = sockfd;
-        fds.events = POLLIN;
+        fds[0].fd = sockfd;
+        fds[0].events = POLLIN;
+        fds[1].fd = upstream_sockfd;
+        fds[1].events = POLLIN;
 
-        int ret = poll(&fds, 1, 1000);
+        int ret = poll(fds, 2, 1000);
         if (ret > 0) {
-            if (fds.revents & POLLIN) {
-                fds.revents = 0;
+            if (fds[0].revents & POLLIN) {
+                fds[0].revents = 0;
+
                 unsigned char packet[MAX_PACKET_DNS_SIZE];
                 socklen_t client_len = sizeof(client_addr);
 
@@ -152,15 +172,26 @@ void runServer(const DnsProxyConfig *config) {
                     createResponse(response, packet, config, received);
                     sendto(sockfd, response, sizeof(response), 0, (const struct sockaddr *)&client_addr, client_len);
                 } else {
-                    sendto(sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
-                    int upstrean_response = recvfrom(sockfd, packet, sizeof(packet), 0, NULL, NULL);
-                    if (upstrean_response > 0) {
-                        sendto(sockfd, packet, upstrean_response, 0, (const struct sockaddr *)&client_addr, client_len);
+                    sendto(upstream_sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
+
+                    struct pollfd upstream_fds;
+                    upstream_fds.fd = upstream_sockfd;
+                    upstream_fds.events = POLLIN;
+                    if (poll(&upstream_fds, 1, 5000) > 0) {
+                        if (upstream_fds.revents & POLLIN) {
+                            int upstream_response = recvfrom(upstream_sockfd, packet, sizeof(packet), 0, NULL, NULL);
+                            if (upstream_response > 0) {
+                                sendto(sockfd, packet, upstream_response, 0, (const struct sockaddr *)&client_addr, client_len);
+                            }
+                        }
+                    } else {
+                        printf("Таймаут при ожидании ответа от вышестоящего DNS-сервера\n");
                     }
                 }
             }
         }
     }
     printf("Завершение работы DNS-proxy-сервера...\n");
+    close(upstream_sockfd);
     close(sockfd);
 }

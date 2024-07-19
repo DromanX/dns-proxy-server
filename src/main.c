@@ -1,6 +1,4 @@
-#include <stdio.h> // Структура FILE
-#include <stdlib.h> // Функция realloc()
-#include <unistd.h> // Функция close()
+#include <stdlib.h> // free()
 
 #include "../include/config.h"
 #include "../include/dns_proxy.h"
