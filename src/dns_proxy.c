@@ -7,8 +7,10 @@
 #include <unistd.h>
 
 #include "../include/dns_proxy.h"
+#include "../include/error_handler.h"
 
 #define DNS_PORT 5454
+#define DNS_DEFAULT_PORT 53
 #define MAX_PACKET_DNS_SIZE 512
 #define DNS_HEADER_SIZE 12
 
@@ -98,72 +100,55 @@ void runServer(const DnsProxyConfig *config) {
     signal(SIGTERM, signalHandler);
 
     // Сокет сервера для связи с клиентом
-    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd < 0) {
-        perror("Не удалось создать сокет");
-        exit(EXIT_FAILURE);
-    }
+    int sockfd = Socket(AF_INET, SOCK_DGRAM, 0);
 
     // Сокет сервера для связи с вышестоящим DNS-сервером и установка для него неблокирующего режима
-    int upstream_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (upstream_sockfd < 0) {
-        perror("Не удалось создать сокет");
-        exit(EXIT_FAILURE);
-    }
+    int upstream_sockfd = Socket(AF_INET, SOCK_DGRAM, 0);
     int flags = fcntl(upstream_sockfd, F_GETFL, 0);
     fcntl(upstream_sockfd, F_SETFL, flags | O_NONBLOCK);
 
-    // Структуры для представления адреса и порта сокетов сервера, клиента и вышестояго днс-сервера
+    // Структуры для представления адреса и порта сокетов сервера, клиента и вышестоящего DNS-сервера
     struct sockaddr_in server_addr = { 0 }, client_addr = { 0 }, upstream_dns_addr = { 0 };
 
+    // Настройка адреса для сокета сервера
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(DNS_PORT);
     server_addr.sin_addr.s_addr = INADDR_ANY;
     socklen_t server_len = sizeof(server_addr);
+    // Привязка сокета сервера к адресу
+    Bind(sockfd, (const struct sockaddr *)&server_addr, server_len);
 
-    if (bind(sockfd, (const struct sockaddr *)&server_addr, server_len) < 0) {
-        perror("Не удалось привязать сокет");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
-
+    // Настройка адреса для сокета вышестоящего DNS-сервера
     upstream_dns_addr.sin_family = AF_INET;
-    upstream_dns_addr.sin_port = htons(53);
-
-    int res = inet_pton(AF_INET, config->upstream_dns_server_ip, &upstream_dns_addr.sin_addr);
-    if (res == 0) {
-        perror("Отсутствует адрес вышестоящего DNS-сервера");
-        exit(EXIT_FAILURE);
-    } else if (res < 0) {
-        perror("Неверный формат ip-адреса вышестоящего DNS-сервера");
-        exit(EXIT_FAILURE);
-    }
+    upstream_dns_addr.sin_port = htons(DNS_DEFAULT_PORT);
+    Inet_pton(AF_INET, config->upstream_dns_server_ip, &upstream_dns_addr.sin_addr);
 
     if (running)
         printf("DNS-прокси-сервер запущен...\n");
+    
     while (running) {
         // Массив двух структур для мониторинга сокетов
         struct pollfd fds[2];
 
-        // client
+        // Client
         fds[0].fd = sockfd;
         fds[0].events = POLLIN;
-        // upstream dns
+        // Upstream DNS
         fds[1].fd = upstream_sockfd;
         fds[1].events = POLLIN;
 
-        if (poll(fds, 2, 1000) > 0) {
+        // Ожидание события на одном из сокетов
+        int ret = Poll(fds, 2, -1);
+        if (ret > 0) {
             if (fds[0].revents & POLLIN) {
                 fds[0].revents = 0;
 
                 unsigned char packet[MAX_PACKET_DNS_SIZE];
                 socklen_t client_len = sizeof(client_addr);
 
-                ssize_t received = recvfrom(sockfd, packet, sizeof(packet), 0, (struct sockaddr *)&client_addr, &client_len);
-                if (received < 0) {
-                    perror("Ошибка при получении данных от клиента");
+                ssize_t received = Recvfrom(sockfd, packet, sizeof(packet), 0, (struct sockaddr *)&client_addr, &client_len);
+                if (received < 0)
                     continue;
-                }
 
                 char domain[256];
                 extractDomain(packet, domain);
@@ -173,16 +158,17 @@ void runServer(const DnsProxyConfig *config) {
                     printf("Домен %s находится в чёрном списке: %s\n", domain, config->blacklist_response_type);
                     unsigned char response[MAX_PACKET_DNS_SIZE];
                     createResponse(response, packet, config, received);
-                    sendto(sockfd, response, sizeof(response), 0, (const struct sockaddr *)&client_addr, client_len);
+                    Sendto(sockfd, response, sizeof(response), 0, (const struct sockaddr *)&client_addr, client_len);
                 } else {
-                    sendto(upstream_sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
+                    Sendto(upstream_sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
 
                     // Ожидание ответа от вышестоящего сервера с таймаутом в 5 секунд
-                    if (poll(&fds[1], 1, 5000) > 0) {
+                    ret = Poll(&fds[1], 1, 5000);
+                    if (ret > 0) {
                         if (fds[1].revents & POLLIN) {
-                            int upstream_response = recvfrom(upstream_sockfd, packet, sizeof(packet), 0, NULL, NULL);
+                            int upstream_response = Recvfrom(upstream_sockfd, packet, sizeof(packet), 0, NULL, NULL);
                             if (upstream_response > 0) {
-                                sendto(sockfd, packet, upstream_response, 0, (const struct sockaddr *)&client_addr, client_len);
+                                Sendto(sockfd, packet, upstream_response, 0, (const struct sockaddr *)&client_addr, client_len);
                             }
                         }
                     } else {
