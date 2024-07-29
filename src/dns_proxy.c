@@ -14,6 +14,7 @@
 #define MAX_PACKET_DNS_SIZE 512
 #define DNS_HEADER_SIZE 12
 
+// Проверяем присутствие домена в чёрном списке
 int isDomainBlacklisted(const char *domain, const DnsProxyConfig *config) {
     for (int i = 0; i < config->blacklist_size; i++) {
         if (strcmp(domain, config->blacklist[i]) == 0)
@@ -22,6 +23,7 @@ int isDomainBlacklisted(const char *domain, const DnsProxyConfig *config) {
     return 0;
 }
 
+// Извлекаем домен из пакета DNS
 void extractDomain(const unsigned char *packet, char *domain) {
     const unsigned char *pos = packet + DNS_HEADER_SIZE;
     int length_domain = 0;
@@ -37,10 +39,11 @@ void extractDomain(const unsigned char *packet, char *domain) {
     domain[--j] = '\0';
 }
 
+// Создаём DNS-ответ 
 void createResponse(unsigned char *response, const unsigned char *query, const DnsProxyConfig *config, unsigned short length_query) {
     memcpy(response, query, length_query);
 
-    // FLAGS
+    // FLAGS 
     response[2] = 0x81;
     response[3] = 0x80;
 
@@ -88,11 +91,13 @@ void createResponse(unsigned char *response, const unsigned char *query, const D
 
 volatile sig_atomic_t running = 1;
 
+// Вызов функции для смены состояния работы сервера после получения одного из сигналов
 void signalHandler(int signum) {
     (void)signum;
     running = 0;
 }
 
+// Функция запуска сервера
 void runServer(const DnsProxyConfig *config) {
 
     // Установка обработки сигналов для завершения работы
@@ -142,10 +147,10 @@ void runServer(const DnsProxyConfig *config) {
         if (ret > 0) {
             if (fds[0].revents & POLLIN) {
                 fds[0].revents = 0;
-
                 unsigned char packet[MAX_PACKET_DNS_SIZE];
                 socklen_t client_len = sizeof(client_addr);
-
+                
+                // Получаем запрос DNS от клиента
                 ssize_t received = Recvfrom(sockfd, packet, sizeof(packet), 0, (struct sockaddr *)&client_addr, &client_len);
                 if (received < 0)
                     continue;
@@ -153,7 +158,8 @@ void runServer(const DnsProxyConfig *config) {
                 char domain[256];
                 extractDomain(packet, domain);
                 printf("Получен запрос для домена: %s\n", domain);
-
+                
+                // Проверяем есть ли домен в чёрном списке, в случае истины формируем соответствующий DNS-ответ, иначе пересылаем запрос на вышестоящий DNS-сервер
                 if (isDomainBlacklisted(domain, config)) {
                     printf("Домен %s находится в чёрном списке: %s\n", domain, config->blacklist_response_type);
                     unsigned char response[MAX_PACKET_DNS_SIZE];
@@ -161,11 +167,11 @@ void runServer(const DnsProxyConfig *config) {
                     Sendto(sockfd, response, sizeof(response), 0, (const struct sockaddr *)&client_addr, client_len);
                 } else {
                     Sendto(upstream_sockfd, packet, received, 0, (const struct sockaddr *)&upstream_dns_addr, sizeof(upstream_dns_addr));
-
                     // Ожидание ответа от вышестоящего сервера с таймаутом в 5 секунд
                     ret = Poll(&fds[1], 1, 5000);
                     if (ret > 0) {
                         if (fds[1].revents & POLLIN) {
+                            // Получаем ответ от вышестоящего сервера и пересылаем его клиенту
                             int upstream_response = Recvfrom(upstream_sockfd, packet, sizeof(packet), 0, NULL, NULL);
                             if (upstream_response > 0) {
                                 Sendto(sockfd, packet, upstream_response, 0, (const struct sockaddr *)&client_addr, client_len);
@@ -179,6 +185,7 @@ void runServer(const DnsProxyConfig *config) {
         }
     }
     printf("Завершение работы DNS-proxy-сервера...\n");
+    // Закрываем все созданные сокеты
     close(upstream_sockfd);
     close(sockfd);
 }
